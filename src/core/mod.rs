@@ -1,4 +1,4 @@
-//! OS-free grid and selection logic for Snapdragin'.
+//! OS-free grid and selection logic for Snapdragin.
 //!
 //! This module intentionally contains no operating system calls. The Windows app
 //! translates native window/input events into these geometry and selection types.

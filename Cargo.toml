@@ -1,6 +1,6 @@
 [package]
-name = "BetterSnap"
-description = "Windows desktop app for Snapdragin'."
+name = "Snapdragin"
+description = "Windows desktop app for Snapdragin."
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.74"
@@ -8,8 +8,15 @@ license = "MIT"
 build = "build.rs"
 
 [[bin]]
-name = "BetterSnap"
+name = "Snapdragin"
 path = "src/main.rs"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
 
 [lints.rust]
 unsafe_code = "allow"

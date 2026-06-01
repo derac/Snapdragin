@@ -1,4 +1,4 @@
-# Snapdragin' Windows Design
+# Snapdragin Windows Design
 
 Status: Windows-only implementation
 Date: 2026-06-01
@@ -6,7 +6,7 @@ Source project: The Griddler
 
 ## 1. Scope
 
-Snapdragin' is a lightweight Windows tray utility. It lets the user drag another app's window, activate a grid overlay with right-click, select cells, and snap the target window to the selected screen area.
+Snapdragin is a lightweight Windows tray utility. It lets the user drag another app's window, activate a grid overlay with right-click, select cells, and snap the target window to the selected screen area.
 
 Linux and macOS are intentionally out of scope for this repository. Any future Linux app should be built separately.
 
@@ -15,13 +15,13 @@ Linux and macOS are intentionally out of scope for this repository. Any future L
 The crate is intentionally small:
 
 ```text
-BetterSnap/
+Snapdragin/
   src/
     core/
       OS-free geometry, grid, and selection math
 
     windows/
-      app logic, overlay, settings UI, and Win32 FFI
+      Win32 app orchestration, desktop integration, overlay, settings UI, persistence, tray, and FFI
 ```
 
 `src/core` exists because the grid math is easy to test without Win32. It is not a separate package or cross-platform backend layer.
@@ -30,9 +30,9 @@ BetterSnap/
 
 1. User drags a window with the left mouse button.
 2. User right-clicks while still holding left click.
-3. Snapdragin' verifies the target is in the native Windows move/size loop.
-4. Snapdragin' cancels that native loop and waits briefly for it to settle.
-5. Snapdragin' shows a click-through layered overlay on the active monitor.
+3. Snapdragin verifies the target is in the native Windows move/size loop.
+4. Snapdragin cancels that native loop and waits briefly for it to settle.
+5. Snapdragin shows a click-through layered overlay on the active monitor.
 6. Pointer movement updates the selected grid cells.
 7. Window move/resize requests are queued to the app message loop instead of running inside the low-level mouse hook.
 8. Right-click again or release left click to finish the snap.
@@ -54,7 +54,7 @@ The Windows module owns all OS integration:
 
 ## 5. Current Risk Areas
 
-- Elevated/admin target windows may reject messages from a non-elevated Snapdragin' process.
+- Elevated/admin target windows may reject messages from a non-elevated Snapdragin process.
 - Some custom title-bar apps may not behave like normal Win32 windows during drag cancellation.
 - Mixed-DPI monitor transitions need manual testing because target apps can handle `WM_DPICHANGED` differently.
 - Low-level mouse hooks must stay fast; expensive or blocking work should be posted back to the app window.

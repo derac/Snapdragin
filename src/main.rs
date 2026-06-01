@@ -11,4 +11,4 @@ fn main() {
 }
 
 #[cfg(not(windows))]
-compile_error!("BetterSnap is a Windows-only desktop app.");
+compile_error!("Snapdragin is a Windows-only desktop app.");

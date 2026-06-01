@@ -144,11 +144,62 @@ pub(crate) struct Paintstruct {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub(crate) struct Guid {
     pub(crate) data1: u32,
     pub(crate) data2: u16,
     pub(crate) data3: u16,
     pub(crate) data4: [u8; 8],
+}
+
+#[repr(C)]
+pub(crate) struct IShellLinkW {
+    pub(crate) lp_vtbl: *const IShellLinkWVtbl,
+}
+
+#[repr(C)]
+pub(crate) struct IShellLinkWVtbl {
+    pub(crate) query_interface:
+        unsafe extern "system" fn(*mut IShellLinkW, *const Guid, *mut *mut c_void) -> i32,
+    pub(crate) add_ref: unsafe extern "system" fn(*mut IShellLinkW) -> u32,
+    pub(crate) release: unsafe extern "system" fn(*mut IShellLinkW) -> u32,
+    pub(crate) get_path: usize,
+    pub(crate) get_id_list: usize,
+    pub(crate) set_id_list: usize,
+    pub(crate) get_description: usize,
+    pub(crate) set_description: usize,
+    pub(crate) get_working_directory: usize,
+    pub(crate) set_working_directory: unsafe extern "system" fn(*mut IShellLinkW, Pcwstr) -> i32,
+    pub(crate) get_arguments: usize,
+    pub(crate) set_arguments: usize,
+    pub(crate) get_hotkey: usize,
+    pub(crate) set_hotkey: usize,
+    pub(crate) get_show_cmd: usize,
+    pub(crate) set_show_cmd: usize,
+    pub(crate) get_icon_location: usize,
+    pub(crate) set_icon_location: usize,
+    pub(crate) set_relative_path: usize,
+    pub(crate) resolve: usize,
+    pub(crate) set_path: unsafe extern "system" fn(*mut IShellLinkW, Pcwstr) -> i32,
+}
+
+#[repr(C)]
+pub(crate) struct IPersistFile {
+    pub(crate) lp_vtbl: *const IPersistFileVtbl,
+}
+
+#[repr(C)]
+pub(crate) struct IPersistFileVtbl {
+    pub(crate) query_interface:
+        unsafe extern "system" fn(*mut IPersistFile, *const Guid, *mut *mut c_void) -> i32,
+    pub(crate) add_ref: unsafe extern "system" fn(*mut IPersistFile) -> u32,
+    pub(crate) release: unsafe extern "system" fn(*mut IPersistFile) -> u32,
+    pub(crate) get_class_id: usize,
+    pub(crate) is_dirty: usize,
+    pub(crate) load: usize,
+    pub(crate) save: unsafe extern "system" fn(*mut IPersistFile, Pcwstr, Bool) -> i32,
+    pub(crate) save_completed: usize,
+    pub(crate) get_cur_file: usize,
 }
 
 #[repr(C)]
@@ -226,6 +277,7 @@ pub(crate) struct Blendfunction {
 #[link(name = "shell32")]
 #[link(name = "comdlg32")]
 #[link(name = "shcore")]
+#[link(name = "ole32")]
 unsafe extern "system" {
     pub(crate) fn AppendMenuW(
         h_menu: Hmenu,
@@ -266,6 +318,15 @@ unsafe extern "system" {
         h_instance: Hinstance,
         lp_param: *mut c_void,
     ) -> Hwnd;
+    pub(crate) fn CoCreateInstance(
+        rclsid: *const Guid,
+        p_unk_outer: *mut c_void,
+        dw_cls_context: Dword,
+        riid: *const Guid,
+        ppv: *mut *mut c_void,
+    ) -> i32;
+    pub(crate) fn CoInitializeEx(pv_reserved: *mut c_void, co_init: Dword) -> i32;
+    pub(crate) fn CoUninitialize();
     pub(crate) fn DefWindowProcW(hwnd: Hwnd, msg: Uint, wparam: Wparam, lparam: Lparam) -> Lresult;
     pub(crate) fn DeleteDC(hdc: Hdc) -> Bool;
     pub(crate) fn DeleteObject(ho: Hgdiobj) -> Bool;
@@ -303,6 +364,7 @@ unsafe extern "system" {
         data: Lparam,
     ) -> Bool;
     pub(crate) fn EndPaint(hwnd: Hwnd, lp_paint: *const Paintstruct) -> Bool;
+    pub(crate) fn Ellipse(hdc: Hdc, left: i32, top: i32, right: i32, bottom: i32) -> Bool;
     pub(crate) fn FillRect(hdc: Hdc, rect: *const Rect, hbr: Hbrush) -> i32;
     pub(crate) fn GetAncestor(hwnd: Hwnd, ga_flags: Uint) -> Hwnd;
     pub(crate) fn GetAsyncKeyState(vkey: i32) -> i16;
@@ -320,14 +382,17 @@ unsafe extern "system" {
     ) -> Bool;
     pub(crate) fn GetModuleHandleW(lp_module_name: Pcwstr) -> Hinstance;
     pub(crate) fn GetMonitorInfoW(hmonitor: Hmonitor, info: *mut Monitorinfo) -> Bool;
+    pub(crate) fn GetDpiForWindow(hwnd: Hwnd) -> Uint;
     pub(crate) fn GetStockObject(index: i32) -> Hgdiobj;
     pub(crate) fn GetWindowTextW(hwnd: Hwnd, text: *mut u16, max_count: i32) -> i32;
     pub(crate) fn GetWindowThreadProcessId(hwnd: Hwnd, process_id: *mut Dword) -> Dword;
     pub(crate) fn InvalidateRect(hwnd: Hwnd, rect: *const Rect, erase: Bool) -> Bool;
     pub(crate) fn LoadCursorW(hinstance: Hinstance, cursor_name: Pcwstr) -> Hcursor;
     pub(crate) fn LoadIconW(hinstance: Hinstance, icon_name: Pcwstr) -> Hicon;
+    pub(crate) fn LineTo(hdc: Hdc, x: i32, y: i32) -> Bool;
     pub(crate) fn MessageBoxW(hwnd: Hwnd, text: Pcwstr, caption: Pcwstr, flags: Uint) -> i32;
     pub(crate) fn MonitorFromPoint(point: Point, flags: Dword) -> Hmonitor;
+    pub(crate) fn MoveToEx(hdc: Hdc, x: i32, y: i32, point: *mut Point) -> Bool;
     pub(crate) fn PostMessageW(hwnd: Hwnd, msg: Uint, wparam: Wparam, lparam: Lparam) -> Bool;
     pub(crate) fn PostQuitMessage(exit_code: i32);
     pub(crate) fn Rectangle(hdc: Hdc, left: i32, top: i32, right: i32, bottom: i32) -> Bool;

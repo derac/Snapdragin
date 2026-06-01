@@ -1,4 +1,4 @@
-# Snapdragin' Source Notes
+# Snapdragin Source Notes
 
 Date reviewed: 2026-06-01
 
@@ -46,5 +46,5 @@ These sources ground the Windows-only implementation decisions in `DESIGN.md`.
 ## Important Source Interpretation
 
 - Windows exposes the required global input, foreign-window movement, layered overlay, and tray primitives directly enough for a focused native utility.
-- Snapdragin' should keep expensive work out of the low-level mouse hook and post it to the app window instead.
+- Snapdragin should keep expensive work out of the low-level mouse hook and post it to the app window instead.
 - Native drag cancellation should address the active move/size window and capture window, not only the root target window.

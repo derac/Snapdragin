@@ -1,6 +1,6 @@
-# BetterSnap
+# Snapdragin
 
-Windows-only Rust app for Snapdragin', a successor to The Griddler.
+Windows-only Rust app for Snapdragin, a successor to The Griddler.
 
 Status: Windows MVP implemented. Linux and macOS are intentionally out of scope for this repository.
 
@@ -16,7 +16,7 @@ cargo build --release
 The Windows executable is produced at:
 
 ```text
-target/release/BetterSnap.exe
+target/release/Snapdragin.exe
 ```
 
 ## Current Windows MVP
