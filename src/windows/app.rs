@@ -6,29 +6,13 @@ use std::{
     path::PathBuf,
     ptr::{null, null_mut},
     sync::{Mutex, OnceLock},
+    thread,
+    time::Duration,
 };
 
-use bettersnap_core::{GridSelection, GridSpec, ScreenPoint, ScreenRect, SelectionTracker};
+use crate::core::{GridSelection, GridSpec, ScreenPoint, ScreenRect, SelectionTracker};
 
-type Bool = i32;
-type Dword = u32;
-type Hbitmap = isize;
-type Hbrush = isize;
-type Hcursor = isize;
-type Hdc = isize;
-type Hgdiobj = isize;
-type Hhook = isize;
-type Hicon = isize;
-type Hinstance = isize;
-type Hmenu = isize;
-type Hmonitor = isize;
-type Hpen = isize;
-type Hwnd = isize;
-type Lparam = isize;
-type Lresult = isize;
-type Pcwstr = *const u16;
-type Uint = u32;
-type Wparam = usize;
+use super::win32::*;
 
 const APP_NAME: &str = "Snapdragin'";
 const APP_DIR_NAME: &str = "Snapdragin";
@@ -40,6 +24,7 @@ const APP_ICON_ID: usize = 101;
 
 const ID_TRAY: u32 = 1;
 const WM_TRAYICON: u32 = WM_USER + 1;
+const WM_APPLY_SNAP: u32 = WM_USER + 2;
 
 const ID_SETTINGS: usize = 1080;
 const ID_ABOUT: usize = 1090;
@@ -58,6 +43,7 @@ const WM_CLOSE: u32 = 0x0010;
 const WM_PAINT: u32 = 0x000F;
 const WM_ERASEBKGND: u32 = 0x0014;
 const WM_COMMAND: u32 = 0x0111;
+const WM_TIMER: u32 = 0x0113;
 const WM_CONTEXTMENU: u32 = 0x007B;
 const WM_CTLCOLORSTATIC: u32 = 0x0138;
 const WM_CTLCOLOREDIT: u32 = 0x0133;
@@ -106,7 +92,6 @@ const SWP_NOMOVE: u32 = 0x0002;
 const SWP_NOACTIVATE: u32 = 0x0010;
 const SWP_FRAMECHANGED: u32 = 0x0020;
 const SWP_SHOWWINDOW: u32 = 0x0040;
-const SWP_NOCOPYBITS: u32 = 0x0100;
 
 const HWND_TOPMOST: Hwnd = -1;
 
@@ -118,7 +103,18 @@ const DIB_RGB_COLORS: u32 = 0;
 
 const SMTO_ABORTIFHUNG: u32 = 0x0002;
 const SMTO_ERRORONEXIT: u32 = 0x0020;
-const DRAG_CANCEL_TIMEOUT_MS: u32 = 50;
+const RDW_INVALIDATE: u32 = 0x0001;
+const RDW_ERASE: u32 = 0x0004;
+const RDW_ALLCHILDREN: u32 = 0x0080;
+const RDW_UPDATENOW: u32 = 0x0100;
+const RDW_FRAME: u32 = 0x0400;
+const DRAG_CANCEL_TIMEOUT_MS: u32 = 20;
+const DRAG_CANCEL_SETTLE_ATTEMPTS: usize = 8;
+const DRAG_CANCEL_SETTLE_DELAY_MS: u64 = 1;
+const SNAP_SETTLE_ATTEMPTS: usize = 3;
+const SNAP_SETTLE_DELAY_MS: u64 = 2;
+const SNAP_SETTLE_TIMER_ID: usize = 20_101;
+const SNAP_SETTLE_TIMER_MS: u32 = 50;
 
 const NIM_ADD: u32 = 0x0000_0000;
 const NIM_DELETE: u32 = 0x0000_0002;
@@ -145,6 +141,7 @@ const BST_CHECKED: usize = 1;
 const BN_CLICKED: usize = 0;
 const EN_CHANGE: usize = 0x0300;
 const WM_NCLBUTTONDOWN: u32 = 0x00A1;
+const WM_NCLBUTTONUP: u32 = 0x00A2;
 const HTCAPTION: usize = 2;
 
 const MB_OK: u32 = 0x0000_0000;
@@ -161,8 +158,6 @@ const IDI_APPLICATION: usize = 32_512;
 const IDC_ARROW: usize = 32_512;
 
 const DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2: isize = -4;
-const DPI_AWARENESS_PER_MONITOR_AWARE: i32 = 2;
-const MDT_EFFECTIVE_DPI: i32 = 0;
 const MIN_GRID_DIMENSION: u16 = 1;
 const MAX_GRID_DIMENSION: u16 = 20;
 const DEFAULT_GRID_COLOR: &str = "#FFFFFF22";
@@ -180,6 +175,7 @@ static STATE: OnceLock<Mutex<AppState>> = OnceLock::new();
 struct MonitorConfig {
     device_name: String,
     display_name: String,
+    monitor_rect: ScreenRect,
     work_rect: ScreenRect,
     columns: u16,
     rows: u16,
@@ -199,6 +195,12 @@ struct SettingsData {
 struct MonitorEdit {
     columns_edit: Hwnd,
     rows_edit: Hwnd,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PendingSnap {
+    target: Hwnd,
+    rect: ScreenRect,
 }
 
 #[derive(Debug, Clone)]
@@ -239,9 +241,13 @@ struct AppState {
     target_hwnd: Hwnd,
     grid: GridSpec,
     settings: SettingsData,
+    monitor_device_name: String,
     monitor_rect: ScreenRect,
     tracker: Option<SelectionTracker>,
     selection: Option<GridSelection>,
+    queued_snap: Option<PendingSnap>,
+    snap_apply_pending: bool,
+    settle_snap: Option<PendingSnap>,
 }
 
 impl AppState {
@@ -272,9 +278,13 @@ impl AppState {
             target_hwnd: 0,
             grid,
             settings,
+            monitor_device_name: String::new(),
             monitor_rect: ScreenRect::new(0, 0, 1, 1),
             tracker: None,
             selection: None,
+            queued_snap: None,
+            snap_apply_pending: false,
+            settle_snap: None,
         }
     }
 
@@ -439,6 +449,18 @@ unsafe extern "system" fn main_wnd_proc(
             handle_menu_command(wparam & 0xFFFF);
             0
         }
+        WM_APPLY_SNAP => {
+            apply_queued_snap();
+            0
+        }
+        WM_TIMER => {
+            if wparam == SNAP_SETTLE_TIMER_ID {
+                apply_snap_settle_timer(hwnd);
+                0
+            } else {
+                DefWindowProcW(hwnd, msg, wparam, lparam)
+            }
+        }
         WM_DISPLAYCHANGE => {
             refresh_monitors();
             rebuild_settings_window_if_open();
@@ -599,7 +621,7 @@ fn handle_mouse_message(message: u32, point: ScreenPoint) -> bool {
     match message {
         WM_MOUSEMOVE => {
             if with_state(|state| state.dragging).unwrap_or(false) && !left_button_is_down() {
-                finish_drag();
+                finish_drag_at(point);
             } else {
                 update_drag(point);
             }
@@ -617,7 +639,7 @@ fn handle_mouse_message(message: u32, point: ScreenPoint) -> bool {
             .unwrap_or(false);
 
             if should_finish {
-                finish_drag();
+                finish_drag_at(point);
             }
             false
         }
@@ -644,7 +666,7 @@ fn handle_right_button_down(point: ScreenPoint) -> bool {
     .unwrap_or(false);
 
     if already_dragging {
-        finish_drag();
+        finish_drag_at(point);
         with_state(|state| state.suppress_right_up = true);
         return true;
     }
@@ -661,29 +683,29 @@ fn handle_right_button_down(point: ScreenPoint) -> bool {
         return false;
     }
 
-    unsafe {
-        break_drag_loop(target);
+    with_state(|state| state.suppress_right_up = true);
+
+    if unsafe { !break_drag_loop(target, point) } {
+        return true;
     }
 
     begin_drag(target, point);
-    with_state(|state| state.suppress_right_up = true);
     true
 }
 
 fn begin_drag(target: Hwnd, point: ScreenPoint) {
     refresh_monitors();
-    let monitor_info = unsafe { monitor_info_from_point(point) };
-    let monitor_rect = monitor_info.work_rect;
-    let grid = with_state(|state| {
-        state
-            .settings
-            .monitors
-            .iter()
-            .find(|monitor| monitor.device_name == monitor_info.device_name)
-            .map(|monitor| GridSpec::clamped(monitor.columns, monitor.rows))
-            .unwrap_or(state.grid)
+    let (monitor_info, grid) = with_state(|state| {
+        let monitor_info = active_monitor_for_point(state, point);
+        let grid = grid_for_monitor(state, &monitor_info);
+        (monitor_info, grid)
     })
-    .unwrap_or_else(default_grid);
+    .unwrap_or_else(|| {
+        let monitor_info = unsafe { monitor_info_from_point(point) };
+        let grid = default_grid();
+        (monitor_info, grid)
+    });
+    let monitor_rect = monitor_info.work_rect;
     let mut tracker = SelectionTracker::new(grid, monitor_rect);
     let selection = tracker.begin(point);
 
@@ -691,6 +713,7 @@ fn begin_drag(target: Hwnd, point: ScreenPoint) {
         state.dragging = true;
         state.target_hwnd = target;
         state.grid = grid;
+        state.monitor_device_name = monitor_info.device_name.clone();
         state.monitor_rect = monitor_rect;
         state.tracker = Some(tracker);
         state.selection = selection;
@@ -699,46 +722,152 @@ fn begin_drag(target: Hwnd, point: ScreenPoint) {
     unsafe {
         show_overlay(monitor_rect);
     }
-    apply_snap();
+    queue_current_snap();
+}
+
+fn grid_for_monitor(state: &AppState, monitor_info: &MonitorConfig) -> GridSpec {
+    state
+        .settings
+        .monitors
+        .iter()
+        .find(|monitor| monitor.device_name == monitor_info.device_name)
+        .map(|monitor| GridSpec::clamped(monitor.columns, monitor.rows))
+        .unwrap_or_else(|| GridSpec::clamped(monitor_info.columns, monitor_info.rows))
+}
+
+fn monitor_for_point(state: &AppState, point: ScreenPoint) -> Option<MonitorConfig> {
+    state
+        .settings
+        .monitors
+        .iter()
+        .find(|monitor| monitor.monitor_rect.contains(point))
+        .cloned()
+        .or_else(|| {
+            state
+                .settings
+                .monitors
+                .iter()
+                .min_by_key(|monitor| point_distance_to_rect_squared(point, monitor.monitor_rect))
+                .cloned()
+        })
+}
+
+fn active_monitor_for_point(state: &AppState, point: ScreenPoint) -> MonitorConfig {
+    let mut native = unsafe { monitor_info_from_point(point) };
+
+    if let Some(monitor) = state
+        .settings
+        .monitors
+        .iter()
+        .find(|monitor| monitor.device_name == native.device_name)
+        .cloned()
+    {
+        return monitor;
+    }
+
+    if let Some(saved) = monitor_for_point(state, point) {
+        native.columns = saved.columns;
+        native.rows = saved.rows;
+    }
+
+    native
+}
+
+fn point_distance_to_rect_squared(point: ScreenPoint, rect: ScreenRect) -> i64 {
+    let x = i64::from(point.x);
+    let y = i64::from(point.y);
+    let left = i64::from(rect.x);
+    let top = i64::from(rect.y);
+    let right = rect.right().saturating_sub(1);
+    let bottom = rect.bottom().saturating_sub(1);
+
+    let dx = if x < left {
+        left - x
+    } else if x > right {
+        x - right
+    } else {
+        0
+    };
+    let dy = if y < top {
+        top - y
+    } else if y > bottom {
+        y - bottom
+    } else {
+        0
+    };
+
+    dx.saturating_mul(dx).saturating_add(dy.saturating_mul(dy))
 }
 
 fn update_drag(point: ScreenPoint) {
-    let changed = with_state(|state| {
-        if !state.dragging {
-            return false;
-        }
-
-        let Some(mut tracker) = state.tracker else {
-            return false;
-        };
-
-        let selection = tracker.update(point);
-        state.tracker = Some(tracker);
-
-        if selection != state.selection {
-            state.selection = selection;
-            return true;
-        }
-
-        false
-    })
-    .unwrap_or(false);
+    let (changed, new_overlay_monitor) = update_drag_monitor_and_selection(point);
 
     if changed {
         unsafe {
-            invalidate_overlay();
+            if let Some(monitor) = new_overlay_monitor {
+                show_overlay(monitor);
+            } else {
+                invalidate_overlay();
+            }
         }
-        apply_snap();
+        queue_current_snap();
     }
 }
 
-fn finish_drag() {
-    apply_snap();
+fn update_drag_monitor_and_selection(point: ScreenPoint) -> (bool, Option<ScreenRect>) {
+    with_state(|state| {
+        if !state.dragging {
+            return (false, None);
+        }
 
-    let overlay = with_state(|state| {
+        let monitor_info = active_monitor_for_point(state, point);
+        let monitor_rect = monitor_info.work_rect;
+
+        if state.monitor_device_name == monitor_info.device_name {
+            return (update_drag_selection_in_state(state, point), None);
+        }
+
+        let grid = grid_for_monitor(state, &monitor_info);
+        let mut tracker = SelectionTracker::new(grid, monitor_rect);
+        let selection = tracker.begin(point);
+
+        state.grid = grid;
+        state.monitor_device_name = monitor_info.device_name.clone();
+        state.monitor_rect = monitor_rect;
+        state.tracker = Some(tracker);
+        state.selection = selection;
+
+        (selection.is_some(), Some(monitor_rect))
+    })
+    .unwrap_or((false, None))
+}
+
+fn update_drag_selection_in_state(state: &mut AppState, point: ScreenPoint) -> bool {
+    if !state.dragging {
+        return false;
+    }
+
+    let Some(mut tracker) = state.tracker else {
+        return false;
+    };
+
+    let selection = tracker.update(point);
+    state.tracker = Some(tracker);
+
+    if selection != state.selection {
+        state.selection = selection;
+        return true;
+    }
+
+    false
+}
+
+fn finish_drag() {
+    let (overlay, snap) = with_state(|state| {
         let overlay = state.overlay_hwnd;
+        let snap = current_snap(state);
         state.clear_drag();
-        overlay
+        (overlay, snap)
     })
     .unwrap_or_default();
 
@@ -748,27 +877,83 @@ fn finish_drag() {
         }
         ReleaseCapture();
     }
+
+    if let Some(snap) = snap {
+        queue_snap(snap);
+    }
 }
 
-fn apply_snap() {
+fn finish_drag_at(point: ScreenPoint) {
+    update_drag(point);
+    finish_drag();
+}
+
+fn queue_current_snap() {
+    let snap = with_state(|state| current_snap(state)).flatten();
+
+    if let Some(snap) = snap {
+        queue_snap(snap);
+    }
+}
+
+fn current_snap(state: &AppState) -> Option<PendingSnap> {
+    let selection = state.selection?;
+    let rect = selection.screen_rect(state.grid, state.monitor_rect)?;
+    Some(PendingSnap {
+        target: state.target_hwnd,
+        rect,
+    })
+}
+
+fn queue_snap(snap: PendingSnap) {
+    let main_hwnd = with_state(|state| {
+        state.queued_snap = Some(snap);
+
+        if state.snap_apply_pending {
+            return 0;
+        }
+
+        state.snap_apply_pending = true;
+        state.main_hwnd
+    })
+    .unwrap_or_default();
+
+    if main_hwnd != 0 {
+        unsafe {
+            PostMessageW(main_hwnd, WM_APPLY_SNAP, 0, 0);
+        }
+    }
+}
+
+fn apply_queued_snap() {
     let snap = with_state(|state| {
-        let selection = state.selection?;
-        let rect = selection.screen_rect(state.grid, state.monitor_rect)?;
-        Some((state.target_hwnd, rect))
+        state.snap_apply_pending = false;
+        state.queued_snap.take()
     })
     .flatten();
 
-    if let Some((target, rect)) = snap {
+    if let Some(snap) = snap {
         unsafe {
-            let first_rect = dpi_compensated_target_rect(target, rect);
-            set_target_window_rect(target, first_rect);
+            apply_snap_to_target(snap);
+        }
+        queue_snap_settle(snap);
+    }
+}
 
-            let settled_rect = dpi_compensated_target_rect(target, rect);
-            if settled_rect != first_rect {
-                set_target_window_rect(target, settled_rect);
-            }
+unsafe fn apply_snap_to_target(snap: PendingSnap) {
+    for attempt in 0..SNAP_SETTLE_ATTEMPTS {
+        if window_is_in_move_size_loop(snap.target) {
+            let _ = break_drag_loop(snap.target, cursor_position());
+        }
+
+        set_target_window_rect(snap.target, snap.rect);
+
+        if attempt + 1 < SNAP_SETTLE_ATTEMPTS {
+            thread::sleep(Duration::from_millis(SNAP_SETTLE_DELAY_MS));
         }
     }
+
+    redraw_target_window(snap.target);
 }
 
 unsafe fn set_target_window_rect(target: Hwnd, rect: ScreenRect) {
@@ -779,48 +964,50 @@ unsafe fn set_target_window_rect(target: Hwnd, rect: ScreenRect) {
         rect.y,
         i32::try_from(rect.width).unwrap_or(i32::MAX),
         i32::try_from(rect.height).unwrap_or(i32::MAX),
-        SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_NOCOPYBITS | SWP_SHOWWINDOW,
+        SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_SHOWWINDOW,
     );
 }
 
-unsafe fn dpi_compensated_target_rect(target: Hwnd, rect: ScreenRect) -> ScreenRect {
-    let dest_monitor = MonitorFromPoint(
-        Point {
-            x: rect.x + i32::try_from(rect.width / 2).unwrap_or_default(),
-            y: rect.y + i32::try_from(rect.height / 2).unwrap_or_default(),
-        },
-        MONITOR_DEFAULTTONEAREST,
+unsafe fn redraw_target_window(target: Hwnd) {
+    InvalidateRect(target, null(), 1);
+    RedrawWindow(
+        target,
+        null(),
+        0,
+        RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW | RDW_FRAME,
     );
+}
 
-    let mut dest_dpi_x = 96;
-    let mut dest_dpi_y = 96;
-    let dpi_result = GetDpiForMonitor(
-        dest_monitor,
-        MDT_EFFECTIVE_DPI,
-        &mut dest_dpi_x,
-        &mut dest_dpi_y,
-    );
+fn queue_snap_settle(snap: PendingSnap) {
+    let main_hwnd = with_state(|state| {
+        state.settle_snap = Some(snap);
+        state.main_hwnd
+    })
+    .unwrap_or_default();
 
-    let awareness = GetAwarenessFromDpiAwarenessContext(GetWindowDpiAwarenessContext(target));
-    let window_dpi = GetDpiForWindow(target);
+    if main_hwnd != 0 {
+        unsafe {
+            SetTimer(main_hwnd, SNAP_SETTLE_TIMER_ID, SNAP_SETTLE_TIMER_MS, None);
+        }
+    }
+}
 
-    if dpi_result != 0
-        || awareness != DPI_AWARENESS_PER_MONITOR_AWARE
-        || window_dpi == 0
-        || dest_dpi_x == 0
-        || window_dpi == dest_dpi_x
-    {
-        return rect;
+fn apply_snap_settle_timer(hwnd: Hwnd) {
+    unsafe {
+        KillTimer(hwnd, SNAP_SETTLE_TIMER_ID);
     }
 
-    let width = ((u64::from(rect.width) * u64::from(window_dpi)) / u64::from(dest_dpi_x))
-        .try_into()
-        .unwrap_or(u32::MAX);
-    let height = ((u64::from(rect.height) * u64::from(window_dpi)) / u64::from(dest_dpi_x))
-        .try_into()
-        .unwrap_or(u32::MAX);
+    let snap = with_state(|state| state.settle_snap.take()).flatten();
+    if let Some(snap) = snap {
+        unsafe {
+            if window_is_in_move_size_loop(snap.target) {
+                let _ = break_drag_loop(snap.target, cursor_position());
+            }
 
-    ScreenRect::new(rect.x, rect.y, width, height)
+            set_target_window_rect(snap.target, snap.rect);
+            redraw_target_window(snap.target);
+        }
+    }
 }
 
 unsafe fn show_overlay(monitor: ScreenRect) {
@@ -1738,6 +1925,7 @@ fn merge_monitors(stored: StoredSettings, mut monitors: Vec<MonitorConfig>) -> S
         monitors.push(MonitorConfig {
             device_name: "DISPLAY".to_string(),
             display_name: "Primary Monitor".to_string(),
+            monitor_rect: ScreenRect::new(0, 0, 1, 1),
             work_rect: ScreenRect::new(0, 0, 1, 1),
             columns: 2,
             rows: 2,
@@ -2074,6 +2262,7 @@ unsafe fn show_about(hwnd: Hwnd) {
 }
 
 unsafe fn cleanup(hwnd: Hwnd) {
+    KillTimer(hwnd, SNAP_SETTLE_TIMER_ID);
     remove_tray_icon(hwnd);
 
     let (hook, overlay, settings) = with_state(|state| {
@@ -2489,6 +2678,12 @@ fn hiword(value: Wparam) -> u16 {
     ((value >> 16) & 0xFFFF) as u16
 }
 
+fn point_lparam(point: ScreenPoint) -> Lparam {
+    let x = u32::from(point.x as i16 as u16);
+    let y = u32::from(point.y as i16 as u16);
+    (x | (y << 16)) as Lparam
+}
+
 fn scale_value(dpi: u32, value: i32) -> i32 {
     let scaled = i64::from(value) * i64::from(dpi.max(1));
     ((scaled + 48) / 96).clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
@@ -2538,39 +2733,129 @@ fn target_window(point: ScreenPoint) -> Option<Hwnd> {
 
 fn window_is_in_move_size_loop(hwnd: Hwnd) -> bool {
     unsafe {
-        let thread_id = GetWindowThreadProcessId(hwnd, null_mut());
-        let mut info: Guithreadinfo = zeroed();
-        info.cb_size = size_of::<Guithreadinfo>() as u32;
-
-        if GetGUIThreadInfo(thread_id, &mut info) == 0 {
-            return true;
-        }
-
-        (info.flags & GUI_INMOVESIZE) != 0 || info.hwnd_move_size != 0
+        gui_thread_info(hwnd)
+            .map(|info| (info.flags & GUI_INMOVESIZE) != 0 || info.hwnd_move_size != 0)
+            .unwrap_or(true)
     }
 }
 
-unsafe fn break_drag_loop(hwnd: Hwnd) {
-    send_drag_cancel_message(hwnd, WM_CANCELMODE);
-    send_drag_cancel_message(hwnd, WM_LBUTTONUP);
-    ReleaseCapture();
+unsafe fn break_drag_loop(hwnd: Hwnd, point: ScreenPoint) -> bool {
+    cancel_drag_loop_once(hwnd, point);
+
+    for _ in 0..DRAG_CANCEL_SETTLE_ATTEMPTS {
+        if !window_is_in_move_size_loop(hwnd) {
+            return true;
+        }
+
+        thread::sleep(Duration::from_millis(DRAG_CANCEL_SETTLE_DELAY_MS));
+        cancel_drag_loop_once(hwnd, cursor_position());
+    }
+
+    !window_is_in_move_size_loop(hwnd)
 }
 
-unsafe fn send_drag_cancel_message(hwnd: Hwnd, message: u32) {
+unsafe fn cancel_drag_loop_once(hwnd: Hwnd, point: ScreenPoint) -> bool {
+    ReleaseCapture();
+
+    let mut sent = true;
+    for target in drag_cancel_targets(hwnd) {
+        if target == 0 {
+            continue;
+        }
+
+        let client_point = client_point_for_window(target, point);
+
+        sent &= send_drag_cancel_message(target, WM_CANCELMODE, 0, 0);
+        sent &= send_drag_cancel_message(target, WM_NCLBUTTONUP, HTCAPTION, point_lparam(point));
+        sent &= send_drag_cancel_message(target, WM_LBUTTONUP, 0, point_lparam(client_point));
+    }
+
+    ReleaseCapture();
+    sent
+}
+
+unsafe fn cursor_position() -> ScreenPoint {
+    let mut point: Point = zeroed();
+    if GetCursorPos(&mut point) == 0 {
+        return ScreenPoint::new(0, 0);
+    }
+
+    ScreenPoint::new(point.x, point.y)
+}
+
+unsafe fn client_point_for_window(hwnd: Hwnd, point: ScreenPoint) -> ScreenPoint {
+    let mut client = Point {
+        x: point.x,
+        y: point.y,
+    };
+
+    if ScreenToClient(hwnd, &mut client) == 0 {
+        return point;
+    }
+
+    ScreenPoint::new(client.x, client.y)
+}
+
+unsafe fn drag_cancel_targets(hwnd: Hwnd) -> [Hwnd; 3] {
+    let mut targets = [hwnd, 0, 0];
+
+    if let Some(info) = gui_thread_info(hwnd) {
+        push_unique_hwnd(&mut targets, info.hwnd_move_size);
+        push_unique_hwnd(&mut targets, info.hwnd_capture);
+    }
+
+    targets
+}
+
+fn push_unique_hwnd(targets: &mut [Hwnd; 3], hwnd: Hwnd) {
+    if hwnd == 0 || targets.contains(&hwnd) {
+        return;
+    }
+
+    if let Some(slot) = targets.iter_mut().find(|target| **target == 0) {
+        *slot = hwnd;
+    }
+}
+
+unsafe fn gui_thread_info(hwnd: Hwnd) -> Option<Guithreadinfo> {
+    let thread_id = GetWindowThreadProcessId(hwnd, null_mut());
+    if thread_id == 0 {
+        return None;
+    }
+
+    let mut info: Guithreadinfo = zeroed();
+    info.cb_size = size_of::<Guithreadinfo>() as u32;
+
+    if GetGUIThreadInfo(thread_id, &mut info) == 0 {
+        return None;
+    }
+
+    Some(info)
+}
+
+unsafe fn send_drag_cancel_message(
+    hwnd: Hwnd,
+    message: u32,
+    wparam: Wparam,
+    lparam: Lparam,
+) -> bool {
     let mut result = 0;
     let sent = SendMessageTimeoutW(
         hwnd,
         message,
-        0,
-        0,
+        wparam,
+        lparam,
         SMTO_ABORTIFHUNG | SMTO_ERRORONEXIT,
         DRAG_CANCEL_TIMEOUT_MS,
         &mut result,
     );
 
     if sent == 0 {
-        PostMessageW(hwnd, message, 0, 0);
+        PostMessageW(hwnd, message, wparam, lparam);
+        return false;
     }
+
+    true
 }
 
 unsafe fn monitor_info_from_point(point: ScreenPoint) -> MonitorConfig {
@@ -2585,6 +2870,7 @@ unsafe fn monitor_info_from_point(point: ScreenPoint) -> MonitorConfig {
     monitor_config_from_handle(monitor).unwrap_or_else(|| MonitorConfig {
         device_name: "DISPLAY".to_string(),
         display_name: "Primary Monitor".to_string(),
+        monitor_rect: ScreenRect::new(point.x, point.y, 1, 1),
         work_rect: ScreenRect::new(point.x, point.y, 1, 1),
         columns: 2,
         rows: 2,
@@ -2642,6 +2928,7 @@ unsafe fn monitor_config_from_handle(monitor: Hmonitor) -> Option<MonitorConfig>
     Some(MonitorConfig {
         device_name,
         display_name,
+        monitor_rect: rect_to_screen_rect(info.rc_monitor),
         work_rect: rect_to_screen_rect(info.rc_work),
         columns: 2,
         rows: 2,
@@ -2734,371 +3021,4 @@ fn copy_wide(buffer: &mut [u16], value: &str) {
 
 const fn rgb(red: u8, green: u8, blue: u8) -> u32 {
     (red as u32) | ((green as u32) << 8) | ((blue as u32) << 16)
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default)]
-struct Point {
-    x: i32,
-    y: i32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default)]
-struct Rect {
-    left: i32,
-    top: i32,
-    right: i32,
-    bottom: i32,
-}
-
-impl Rect {
-    const fn new(left: i32, top: i32, right: i32, bottom: i32) -> Self {
-        Self {
-            left,
-            top,
-            right,
-            bottom,
-        }
-    }
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default)]
-struct Size {
-    cx: i32,
-    cy: i32,
-}
-
-#[repr(C)]
-struct Msg {
-    hwnd: Hwnd,
-    message: Uint,
-    w_param: Wparam,
-    l_param: Lparam,
-    time: Dword,
-    pt: Point,
-    l_private: Dword,
-}
-
-#[repr(C)]
-struct Wndclassexw {
-    cb_size: Uint,
-    style: Uint,
-    lpfn_wnd_proc: Option<unsafe extern "system" fn(Hwnd, Uint, Wparam, Lparam) -> Lresult>,
-    cb_cls_extra: i32,
-    cb_wnd_extra: i32,
-    h_instance: Hinstance,
-    h_icon: Hicon,
-    h_cursor: Hcursor,
-    hbr_background: Hbrush,
-    lpsz_menu_name: Pcwstr,
-    lpsz_class_name: Pcwstr,
-    h_icon_sm: Hicon,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct Msllhookstruct {
-    pt: Point,
-    mouse_data: Dword,
-    flags: Dword,
-    time: Dword,
-    dw_extra_info: usize,
-}
-
-#[repr(C)]
-struct Guithreadinfo {
-    cb_size: Dword,
-    flags: Dword,
-    hwnd_active: Hwnd,
-    hwnd_focus: Hwnd,
-    hwnd_capture: Hwnd,
-    hwnd_menu_owner: Hwnd,
-    hwnd_move_size: Hwnd,
-    hwnd_caret: Hwnd,
-    rc_caret: Rect,
-}
-
-#[repr(C)]
-struct Monitorinfo {
-    cb_size: Dword,
-    rc_monitor: Rect,
-    rc_work: Rect,
-    flags: Dword,
-}
-
-#[repr(C)]
-struct Monitorinfoexw {
-    cb_size: Dword,
-    rc_monitor: Rect,
-    rc_work: Rect,
-    flags: Dword,
-    sz_device: [u16; 32],
-}
-
-#[repr(C)]
-struct DisplayDeviceW {
-    cb: Dword,
-    device_name: [u16; 32],
-    device_string: [u16; 128],
-    state_flags: Dword,
-    device_id: [u16; 128],
-    device_key: [u16; 128],
-}
-
-#[repr(C)]
-struct Paintstruct {
-    hdc: Hdc,
-    f_erase: Bool,
-    rc_paint: Rect,
-    f_restore: Bool,
-    f_inc_update: Bool,
-    rgb_reserved: [u8; 32],
-}
-
-#[repr(C)]
-struct Guid {
-    data1: u32,
-    data2: u16,
-    data3: u16,
-    data4: [u8; 8],
-}
-
-#[repr(C)]
-struct Notifyicondataw {
-    cb_size: Dword,
-    h_wnd: Hwnd,
-    u_id: Uint,
-    u_flags: Uint,
-    u_callback_message: Uint,
-    h_icon: Hicon,
-    sz_tip: [u16; 128],
-    dw_state: Dword,
-    dw_state_mask: Dword,
-    sz_info: [u16; 256],
-    u_version: Uint,
-    sz_info_title: [u16; 64],
-    dw_info_flags: Dword,
-    guid_item: Guid,
-    h_balloon_icon: Hicon,
-}
-
-#[repr(C)]
-struct Choosecolorw {
-    l_struct_size: Dword,
-    hwnd_owner: Hwnd,
-    h_instance: Hwnd,
-    rgb_result: Dword,
-    lp_cust_colors: *mut Dword,
-    flags: Dword,
-    l_cust_data: Lparam,
-    lpfn_hook: Option<unsafe extern "system" fn(Hwnd, Uint, Wparam, Lparam) -> Uint>,
-    lp_template_name: Pcwstr,
-}
-
-#[repr(C)]
-struct Bitmapinfoheader {
-    bi_size: Dword,
-    bi_width: i32,
-    bi_height: i32,
-    bi_planes: u16,
-    bi_bit_count: u16,
-    bi_compression: Dword,
-    bi_size_image: Dword,
-    bi_x_pels_per_meter: i32,
-    bi_y_pels_per_meter: i32,
-    bi_clr_used: Dword,
-    bi_clr_important: Dword,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Default)]
-struct Rgbquad {
-    rgb_blue: u8,
-    rgb_green: u8,
-    rgb_red: u8,
-    rgb_reserved: u8,
-}
-
-#[repr(C)]
-struct Bitmapinfo {
-    bmi_header: Bitmapinfoheader,
-    bmi_colors: [Rgbquad; 1],
-}
-
-#[repr(C)]
-struct Blendfunction {
-    blend_op: u8,
-    blend_flags: u8,
-    source_constant_alpha: u8,
-    alpha_format: u8,
-}
-
-#[link(name = "user32")]
-#[link(name = "gdi32")]
-#[link(name = "shell32")]
-#[link(name = "comdlg32")]
-#[link(name = "shcore")]
-unsafe extern "system" {
-    fn AppendMenuW(h_menu: Hmenu, u_flags: Uint, u_id_new_item: usize, lp_new_item: Pcwstr)
-        -> Bool;
-    fn BeginPaint(hwnd: Hwnd, lp_paint: *mut Paintstruct) -> Hdc;
-    fn CallNextHookEx(hhk: Hhook, n_code: i32, wparam: Wparam, lparam: Lparam) -> Lresult;
-    fn CreateCompatibleDC(hdc: Hdc) -> Hdc;
-    fn CreateDIBSection(
-        hdc: Hdc,
-        pbmi: *const Bitmapinfo,
-        usage: Uint,
-        ppv_bits: *mut *mut c_void,
-        h_section: isize,
-        offset: Dword,
-    ) -> Hbitmap;
-    fn CreatePen(style: i32, width: i32, color: u32) -> Hpen;
-    fn CreatePopupMenu() -> Hmenu;
-    fn CreateSolidBrush(color: u32) -> Hbrush;
-    fn CreateWindowExW(
-        dw_ex_style: Dword,
-        lp_class_name: Pcwstr,
-        lp_window_name: Pcwstr,
-        dw_style: Dword,
-        x: i32,
-        y: i32,
-        width: i32,
-        height: i32,
-        hwnd_parent: Hwnd,
-        h_menu: Hmenu,
-        h_instance: Hinstance,
-        lp_param: *mut c_void,
-    ) -> Hwnd;
-    fn DefWindowProcW(hwnd: Hwnd, msg: Uint, wparam: Wparam, lparam: Lparam) -> Lresult;
-    fn DeleteDC(hdc: Hdc) -> Bool;
-    fn DeleteObject(ho: Hgdiobj) -> Bool;
-    fn DestroyMenu(h_menu: Hmenu) -> Bool;
-    fn DestroyWindow(hwnd: Hwnd) -> Bool;
-    fn DispatchMessageW(lp_msg: *const Msg) -> Lresult;
-    fn DrawIconEx(
-        hdc: Hdc,
-        x_left: i32,
-        y_top: i32,
-        hicon: Hicon,
-        cx_width: i32,
-        cy_width: i32,
-        istep_if_ani_cur: Uint,
-        hbr_flicker_free_draw: Hbrush,
-        di_flags: Uint,
-    ) -> Bool;
-    fn DrawTextW(hdc: Hdc, text: Pcwstr, text_len: i32, rect: *mut Rect, format: Uint) -> i32;
-    fn EnumDisplayDevicesW(
-        lp_device: Pcwstr,
-        i_dev_num: Dword,
-        lp_display_device: *mut DisplayDeviceW,
-        dw_flags: Dword,
-    ) -> Bool;
-    fn EnumDisplayMonitors(
-        hdc: Hdc,
-        clip_rect: *const Rect,
-        callback: Option<unsafe extern "system" fn(Hmonitor, Hdc, *mut Rect, Lparam) -> Bool>,
-        data: Lparam,
-    ) -> Bool;
-    fn EndPaint(hwnd: Hwnd, lp_paint: *const Paintstruct) -> Bool;
-    fn FillRect(hdc: Hdc, rect: *const Rect, hbr: Hbrush) -> i32;
-    fn GetAncestor(hwnd: Hwnd, ga_flags: Uint) -> Hwnd;
-    fn GetAsyncKeyState(vkey: i32) -> i16;
-    fn GetClientRect(hwnd: Hwnd, rect: *mut Rect) -> Bool;
-    fn GetCursorPos(point: *mut Point) -> Bool;
-    fn GetDC(hwnd: Hwnd) -> Hdc;
-    fn GetDlgItem(hwnd: Hwnd, id: i32) -> Hwnd;
-    fn GetDpiForWindow(hwnd: Hwnd) -> Uint;
-    fn GetForegroundWindow() -> Hwnd;
-    fn GetGUIThreadInfo(id_thread: Dword, gui: *mut Guithreadinfo) -> Bool;
-    fn GetMessageW(
-        lp_msg: *mut Msg,
-        hwnd: Hwnd,
-        msg_filter_min: Uint,
-        msg_filter_max: Uint,
-    ) -> Bool;
-    fn GetModuleHandleW(lp_module_name: Pcwstr) -> Hinstance;
-    fn GetMonitorInfoW(hmonitor: Hmonitor, info: *mut Monitorinfo) -> Bool;
-    fn GetStockObject(index: i32) -> Hgdiobj;
-    fn GetWindowDpiAwarenessContext(hwnd: Hwnd) -> isize;
-    fn GetWindowTextW(hwnd: Hwnd, text: *mut u16, max_count: i32) -> i32;
-    fn GetWindowThreadProcessId(hwnd: Hwnd, process_id: *mut Dword) -> Dword;
-    fn InvalidateRect(hwnd: Hwnd, rect: *const Rect, erase: Bool) -> Bool;
-    fn LoadCursorW(hinstance: Hinstance, cursor_name: Pcwstr) -> Hcursor;
-    fn LoadIconW(hinstance: Hinstance, icon_name: Pcwstr) -> Hicon;
-    fn MessageBoxW(hwnd: Hwnd, text: Pcwstr, caption: Pcwstr, flags: Uint) -> i32;
-    fn MonitorFromPoint(point: Point, flags: Dword) -> Hmonitor;
-    fn PostMessageW(hwnd: Hwnd, msg: Uint, wparam: Wparam, lparam: Lparam) -> Bool;
-    fn PostQuitMessage(exit_code: i32);
-    fn Rectangle(hdc: Hdc, left: i32, top: i32, right: i32, bottom: i32) -> Bool;
-    fn RegisterClassExW(wnd_class: *const Wndclassexw) -> u16;
-    fn ReleaseCapture() -> Bool;
-    fn ReleaseDC(hwnd: Hwnd, hdc: Hdc) -> i32;
-    fn SelectObject(hdc: Hdc, object: Hgdiobj) -> Hgdiobj;
-    fn SendMessageTimeoutW(
-        hwnd: Hwnd,
-        msg: Uint,
-        wparam: Wparam,
-        lparam: Lparam,
-        flags: Uint,
-        timeout: Uint,
-        result: *mut Lparam,
-    ) -> Lresult;
-    fn SendMessageW(hwnd: Hwnd, msg: Uint, wparam: Wparam, lparam: Lparam) -> Lresult;
-    fn SetBkColor(hdc: Hdc, color: u32) -> u32;
-    fn SetBkMode(hdc: Hdc, mode: i32) -> i32;
-    fn SetForegroundWindow(hwnd: Hwnd) -> Bool;
-    fn SetProcessDpiAwarenessContext(value: isize) -> Bool;
-    fn SetWindowTextW(hwnd: Hwnd, text: Pcwstr) -> Bool;
-    fn SetTextColor(hdc: Hdc, color: u32) -> u32;
-    fn SetWindowPos(
-        hwnd: Hwnd,
-        hwnd_insert_after: Hwnd,
-        x: i32,
-        y: i32,
-        cx: i32,
-        cy: i32,
-        flags: Uint,
-    ) -> Bool;
-    fn SetWindowsHookExW(
-        hook: i32,
-        proc: Option<unsafe extern "system" fn(i32, Wparam, Lparam) -> Lresult>,
-        hmod: Hinstance,
-        thread_id: Dword,
-    ) -> Hhook;
-    fn Shell_NotifyIconW(message: Dword, data: *mut Notifyicondataw) -> Bool;
-    fn ShowWindow(hwnd: Hwnd, cmd_show: i32) -> Bool;
-    fn TrackPopupMenu(
-        menu: Hmenu,
-        flags: Uint,
-        x: i32,
-        y: i32,
-        reserved: i32,
-        hwnd: Hwnd,
-        rect: *const Rect,
-    ) -> i32;
-    fn TranslateMessage(lp_msg: *const Msg) -> Bool;
-    fn UnhookWindowsHookEx(hhk: Hhook) -> Bool;
-    fn UpdateLayeredWindow(
-        hwnd: Hwnd,
-        hdc_dst: Hdc,
-        ppt_dst: *const Point,
-        psize: *const Size,
-        hdc_src: Hdc,
-        ppt_src: *const Point,
-        cr_key: Dword,
-        pblend: *const Blendfunction,
-        dw_flags: Dword,
-    ) -> Bool;
-    fn WindowFromPoint(point: Point) -> Hwnd;
-    fn GetCurrentProcessId() -> Dword;
-    fn ChooseColorW(choose_color: *mut Choosecolorw) -> Bool;
-    fn GetAwarenessFromDpiAwarenessContext(value: isize) -> i32;
-    fn GetDpiForMonitor(
-        hmonitor: Hmonitor,
-        dpi_type: i32,
-        dpi_x: *mut Uint,
-        dpi_y: *mut Uint,
-    ) -> i32;
 }

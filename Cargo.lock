@@ -3,19 +3,5 @@
 version = 3
 
 [[package]]
-name = "bettersnap-core"
+name = "BetterSnap"
 version = "0.1.0"
-
-[[package]]
-name = "bettersnap-platform"
-version = "0.1.0"
-dependencies = [
- "bettersnap-core",
-]
-
-[[package]]
-name = "bettersnap-windows"
-version = "0.1.0"
-dependencies = [
- "bettersnap-core",
-]

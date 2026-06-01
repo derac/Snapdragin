@@ -9,7 +9,7 @@ fn main() {
     }
 
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set"));
-    let res_path = out_dir.join("snapdragin.res");
+    let res_path = out_dir.join("BetterSnap.res");
     let rc_path = PathBuf::from("app.rc");
 
     let rc = find_resource_compiler().expect("Windows resource compiler rc.exe was not found");
@@ -25,7 +25,7 @@ fn main() {
         panic!("rc.exe failed with status {status}");
     }
 
-    println!("cargo:rustc-link-arg-bin=snapdragin={}", res_path.display());
+    println!("cargo:rustc-link-arg-bin=BetterSnap={}", res_path.display());
 }
 
 fn find_resource_compiler() -> io::Result<PathBuf> {

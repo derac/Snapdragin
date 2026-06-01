@@ -1,21 +1,18 @@
-[workspace]
-members = [
-    "crates/bettersnap-core",
-    "crates/bettersnap-platform",
-    "crates/bettersnap-windows",
-]
-resolver = "2"
-
-[workspace.package]
+[package]
+name = "BetterSnap"
+description = "Windows desktop app for Snapdragin'."
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.74"
 license = "MIT"
+build = "build.rs"
 
-[workspace.lints.rust]
-unsafe_code = "forbid"
+[[bin]]
+name = "BetterSnap"
+path = "src/main.rs"
 
-[workspace.lints.clippy]
-pedantic = { level = "warn", priority = -1 }
-missing_errors_doc = "allow"
-module_name_repetitions = "allow"
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+pedantic = { level = "allow", priority = -1 }

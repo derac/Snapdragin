@@ -1,4 +1,4 @@
-use crate::{grid::rect_from_bounds, GridCell, GridSpec, ScreenPoint, ScreenRect};
+use super::{grid::rect_from_bounds, GridCell, GridSpec, ScreenPoint, ScreenRect};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GridSelection {
@@ -57,24 +57,6 @@ impl GridArea {
     }
 
     #[must_use]
-    pub const fn columns(self) -> u16 {
-        self.right.saturating_sub(self.left)
-    }
-
-    #[must_use]
-    pub const fn rows(self) -> u16 {
-        self.bottom.saturating_sub(self.top)
-    }
-
-    #[must_use]
-    pub const fn contains(self, cell: GridCell) -> bool {
-        cell.column >= self.left
-            && cell.column < self.right
-            && cell.row >= self.top
-            && cell.row < self.bottom
-    }
-
-    #[must_use]
     pub fn screen_rect(self, grid: GridSpec, monitor: ScreenRect) -> Option<ScreenRect> {
         if monitor.is_empty()
             || self.left >= self.right
@@ -114,26 +96,6 @@ impl SelectionTracker {
     }
 
     #[must_use]
-    pub const fn grid(self) -> GridSpec {
-        self.grid
-    }
-
-    #[must_use]
-    pub const fn monitor(self) -> ScreenRect {
-        self.monitor
-    }
-
-    #[must_use]
-    pub const fn anchor(self) -> Option<GridCell> {
-        self.anchor
-    }
-
-    #[must_use]
-    pub const fn focus(self) -> Option<GridCell> {
-        self.focus
-    }
-
-    #[must_use]
     pub fn current_selection(self) -> Option<GridSelection> {
         Some(GridSelection::new(self.anchor?, self.focus?))
     }
@@ -153,12 +115,14 @@ impl SelectionTracker {
         self.current_selection()
     }
 
+    #[cfg(test)]
     pub fn finish(&mut self) -> Option<GridSelection> {
         let selection = self.current_selection();
         self.clear();
         selection
     }
 
+    #[cfg(test)]
     pub fn clear(&mut self) {
         self.anchor = None;
         self.focus = None;
@@ -168,7 +132,7 @@ impl SelectionTracker {
 #[cfg(test)]
 mod tests {
     use super::{GridArea, GridSelection, SelectionTracker};
-    use crate::{GridCell, GridSpec, ScreenPoint, ScreenRect};
+    use crate::core::{GridCell, GridSpec, ScreenPoint, ScreenRect};
 
     #[test]
     fn normalizes_selection_from_any_direction() {

@@ -1,6 +1,6 @@
 use std::{error::Error, fmt};
 
-use crate::{ScreenPoint, ScreenRect};
+use super::{ScreenPoint, ScreenRect};
 
 pub const MIN_GRID_DIMENSION: u16 = 1;
 pub const MAX_GRID_DIMENSION: u16 = 64;
@@ -61,6 +61,7 @@ impl GridSpec {
     }
 
     #[must_use]
+    #[cfg(test)]
     pub fn cell_at(self, monitor: ScreenRect, point: ScreenPoint) -> Option<GridCell> {
         if !monitor.contains(point) {
             return None;
@@ -92,6 +93,7 @@ impl GridSpec {
     }
 
     #[must_use]
+    #[cfg(test)]
     pub fn cell_rect(self, monitor: ScreenRect, cell: GridCell) -> Option<ScreenRect> {
         if !self.contains_cell(cell) || monitor.is_empty() {
             return None;
@@ -106,6 +108,7 @@ impl GridSpec {
     }
 
     #[must_use]
+    #[cfg(test)]
     pub const fn contains_cell(self, cell: GridCell) -> bool {
         cell.column < self.columns && cell.row < self.rows
     }
@@ -196,7 +199,7 @@ pub(crate) fn rect_from_bounds(left: i64, top: i64, right: i64, bottom: i64) -> 
 #[cfg(test)]
 mod tests {
     use super::{GridCell, GridError, GridSpec};
-    use crate::{ScreenPoint, ScreenRect};
+    use crate::core::{ScreenPoint, ScreenRect};
 
     #[test]
     fn rejects_invalid_grid_dimensions() {

@@ -1,8 +1,8 @@
-# Snapdragin'
+# BetterSnap
 
-Rust rewrite workspace for Snapdragin', a possible successor to The Griddler.
+Windows-only Rust app for Snapdragin', a successor to The Griddler.
 
-Status: Windows MVP implemented. The shared core and Windows desktop app compile; macOS and Linux backends are still design/prototype work.
+Status: Windows MVP implemented. Linux and macOS are intentionally out of scope for this repository.
 
 ## Build
 
@@ -10,13 +10,13 @@ Requires a Rust toolchain with Cargo.
 
 ```powershell
 cargo test
-cargo build --release --workspace
+cargo build --release
 ```
 
 The Windows executable is produced at:
 
 ```text
-target/release/snapdragin.exe
+target/release/BetterSnap.exe
 ```
 
 ## Current Windows MVP
@@ -37,7 +37,6 @@ The Rust Windows app currently supports:
 Files:
 
 - [DESIGN.md](DESIGN.md) - proposed product and technical design
-- [SOURCES.md](SOURCES.md) - source links used to ground platform assumptions
-- [crates/bettersnap-core](crates/bettersnap-core) - shared grid, geometry, and selection logic
-- [crates/bettersnap-platform](crates/bettersnap-platform) - shared traits for OS-specific backends
-- [crates/bettersnap-windows](crates/bettersnap-windows) - Windows desktop app
+- [SOURCES.md](SOURCES.md) - source links used to ground Windows API decisions
+- [src/core](src/core) - OS-free grid, geometry, and selection logic
+- [src/windows](src/windows) - Windows desktop app and Win32 FFI

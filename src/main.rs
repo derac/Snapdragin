@@ -1,14 +1,14 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 #[cfg(windows)]
-mod windows_app;
+mod core;
+#[cfg(windows)]
+mod windows;
 
 #[cfg(windows)]
 fn main() {
-    windows_app::run();
+    windows::run();
 }
 
 #[cfg(not(windows))]
-fn main() {
-    eprintln!("snapdragin-windows only runs on Windows.");
-}
+compile_error!("BetterSnap is a Windows-only desktop app.");
