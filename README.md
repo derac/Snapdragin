@@ -1,8 +1,10 @@
+[demo](https://github.com/user-attachments/assets/ce02675b-2678-4f79-bab1-e725f6bfb9ff)
+
+<img width="700" height="500" alt="settings" src="https://github.com/user-attachments/assets/396befcb-8bd0-4513-b36b-7eadd3e6acf2" />
+
 # Snapdragin
 
-Windows-only Rust app for Snapdragin, a successor to The Griddler.
-
-Status: Windows MVP implemented. Linux and macOS are intentionally out of scope for this repository.
+Windows-only Rust app. Resize windows into tiles with multi monitor and dpi support. Use the mouse to drag and snap windows into tiles.
 
 ## Build
 
@@ -18,21 +20,6 @@ The Windows executable is produced at:
 ```text
 target/release/Snapdragin.exe
 ```
-
-## Current Windows MVP
-
-The Rust Windows app currently supports:
-
-- original The Griddler icon embedded into the executable and tray icon
-- tray icon right-click menu with Settings and Exit
-- tray icon double-click settings window
-- original-style settings UI with monitor grid configuration, visual colors, startup, and usage info
-- settings changes apply immediately and persist to `%APPDATA%\Snapdragin\settings.ini`
-- global mouse hook
-- current drag/right-click activation gesture
-- transparent topmost grid overlay
-- live window move/resize preview
-- final snap on second right-click or left-button release
 
 Files:
 
