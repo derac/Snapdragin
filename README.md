@@ -1,3 +1,5 @@
+[demo](https://github.com/user-attachments/assets/ce02675b-2678-4f79-bab1-e725f6bfb9ff)
+
 # BetterSnap
 
 Windows-only Rust app for Snapdragin', a successor to The Griddler.
