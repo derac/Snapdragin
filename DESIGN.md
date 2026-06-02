@@ -21,10 +21,21 @@ Snapdragin/
       OS-free geometry, grid, and selection math
 
     windows/
-      Win32 app orchestration, desktop integration, overlay, settings UI, persistence, tray, and FFI
+      Windows-only integration boundary
+
+      app/
+        tray app runtime, drag tracking, snapping, overlay, and settings UI
+
+        settings/
+          settings persistence, controls, painting, and startup shortcut handling
+
+      ffi/
+        raw Win32 and COM declarations used by the app
 ```
 
 `src/core` exists because the grid math is easy to test without Win32. It is not a separate package or cross-platform backend layer.
+
+The Windows app is split by operational responsibility, not by framework layer. `runtime` owns process setup and the message loop, `drag` owns low-level mouse state transitions, `snap` owns queued target-window movement, `overlay` owns transparent overlay drawing, `desktop` owns monitor and target-window discovery, `tray` owns notification-area UI, and `settings` owns the settings dialog and persisted app settings.
 
 ## 3. Windows Workflow
 
@@ -50,6 +61,7 @@ The Windows module owns all OS integration:
 - overlay rendering with a topmost layered window
 - target move/resize with `SetWindowPos`
 - per-monitor settings stored in `%APPDATA%\Snapdragin\settings.ini`
+- startup launch through a `Snapdragin.lnk` shortcut in the user's Startup folder
 - tray lifecycle with `Shell_NotifyIconW`
 
 ## 5. Current Risk Areas

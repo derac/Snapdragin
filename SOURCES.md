@@ -43,8 +43,13 @@ These sources ground the Windows-only implementation decisions in `DESIGN.md`.
 
 - `Shell_NotifyIconW` - tray icon lifecycle: https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shell_notifyiconw
 
+- Shell Links, `IShellLinkW`, and `IPersistFile` - creating a Windows shortcut that targets the current executable for Startup launch: https://learn.microsoft.com/en-us/windows/win32/shell/links
+
+- `IPersistFile::Save` - persisting the generated `.lnk` file: https://learn.microsoft.com/en-us/windows/win32/api/objidl/nf-objidl-ipersistfile-save
+
 ## Important Source Interpretation
 
 - Windows exposes the required global input, foreign-window movement, layered overlay, and tray primitives directly enough for a focused native utility.
 - Snapdragin should keep expensive work out of the low-level mouse hook and post it to the app window instead.
 - Native drag cancellation should address the active move/size window and capture window, not only the root target window.
+- Startup launch should be represented as a Shell Link shortcut to the executable that started the app, not as a command script.

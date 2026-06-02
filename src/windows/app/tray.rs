@@ -1,4 +1,3 @@
-use super::settings_window;
 use super::*;
 
 pub(super) unsafe fn add_tray_icon(hwnd: Hwnd) {
@@ -18,8 +17,7 @@ unsafe fn notify_icon(hwnd: Hwnd) -> Notifyicondataw {
     nid.u_id = ID_TRAY;
     nid.u_flags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     nid.u_callback_message = WM_TRAYICON;
-    nid.h_icon = with_state(|state| state.app_icon)
-        .unwrap_or_else(|| load_app_icon(GetModuleHandleW(null())));
+    nid.h_icon = with_state(|state| state.app_icon).unwrap_or_default();
     copy_wide(&mut nid.sz_tip, APP_NAME);
     nid
 }
@@ -65,13 +63,7 @@ pub(super) fn handle_menu_command(command: usize) {
         ID_SETTINGS => {
             let hwnd = with_state(|state| state.main_hwnd).unwrap_or_default();
             unsafe {
-                settings_window::show_settings_window(hwnd);
-            }
-        }
-        ID_ABOUT => {
-            let hwnd = with_state(|state| state.main_hwnd).unwrap_or_default();
-            unsafe {
-                show_about(hwnd);
+                settings::show_settings_window(hwnd);
             }
         }
         ID_EXIT => {

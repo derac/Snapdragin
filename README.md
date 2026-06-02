@@ -26,4 +26,7 @@ Files:
 - [DESIGN.md](DESIGN.md) - proposed product and technical design
 - [SOURCES.md](SOURCES.md) - source links used to ground Windows API decisions
 - [src/core](src/core) - OS-free grid, geometry, and selection logic
-- [src/windows](src/windows) - Windows desktop app and Win32 FFI
+- [src/windows](src/windows) - Windows-only integration boundary
+- [src/windows/app](src/windows/app) - tray app runtime, drag tracking, snapping, overlay, and settings UI
+- [src/windows/app/settings](src/windows/app/settings) - settings persistence, controls, painting, and startup shortcut handling
+- [src/windows/ffi](src/windows/ffi) - raw Win32 and COM declarations used by the app

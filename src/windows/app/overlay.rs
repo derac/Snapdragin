@@ -1,4 +1,4 @@
-use super::settings_store::rgba_from_hex;
+use super::settings::rgba_from_hex;
 use super::*;
 
 pub(super) unsafe extern "system" fn wnd_proc(

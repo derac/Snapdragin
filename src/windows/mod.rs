@@ -1,4 +1,4 @@
 mod app;
-mod win32;
+mod ffi;
 
 pub(crate) use app::run;
