@@ -1,6 +1,7 @@
 [demo](https://github.com/user-attachments/assets/ce02675b-2678-4f79-bab1-e725f6bfb9ff)
 
-<img width="700" height="500" alt="Settings menu" src="https://github.com/user-attachments/assets/0b0d2f1f-cd09-40b9-b9bc-04b47c521cec" />
+<img width="400" alt="settings" src="https://github.com/user-attachments/assets/5a144643-1384-4235-9733-ce58abfc50d1" />
+
 
 # Snapdragin
 
